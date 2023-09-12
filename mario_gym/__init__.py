@@ -1,6 +1,6 @@
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QBrush, QColor
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QVBoxLayout, QLabel, QWidget, QPushButton, QComboBox
+from PyQt6.QtWidgets import QApplication, QVBoxLayout, QLabel, QWidget, QPushButton, QComboBox, QTabWidget, QListWidget, QGroupBox
 import retro
 import numpy as np
 import sys
@@ -446,11 +446,11 @@ class GeneticAlgorithm:
 class MarioAI(QWidget):
     def __init__(self, main, game_level, game_speed):
         super().__init__()
-        self.setWindowTitle('Mario')
+        self.setWindowTitle('Mario AI')
         self.main = main
         self.game_speed = game_speed
 
-        self.ga = GeneticAlgorithm()
+        self.ga = GeneticAlgorithm(5, [44, 32, 21, 10], 30, 0.1, 0.1)
 
         global env
         if env is not None:
@@ -463,7 +463,7 @@ class MarioAI(QWidget):
         self.screen_height = screen.shape[1] * 2
 
         self.setFixedSize(self.screen_width, self.screen_height)
-        self.move(100, 100)
+        self.move(400, 100)
 
         self.screen_label = QLabel(self)
         self.screen_label.setGeometry(0, 0, self.screen_width, self.screen_height)
@@ -590,6 +590,63 @@ class MarioAI(QWidget):
         self.main.close_mario_ai()
 
 
+class MarioAIListTool(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        self.ai_list = dict()
+        self.ai_list_widget = QListWidget()
+        self.ai_list_widget.setFixedHeight(400)
+        for i in range(50):
+            self.ai_list_widget.addItem(f'asdf {i}')
+        self.ai_list_widget.clicked.connect(self.select_ai)
+
+        ai_list_layout = QVBoxLayout()
+        ai_list_layout.addWidget(self.ai_list_widget)
+
+        self.setLayout(ai_list_layout)
+
+    def select_ai(self):
+        self.current_vote_id = self.ai_list_widget.currentItem().text()
+
+
+class MarioAICreateTool(QWidget):
+    def __init__(self):
+        super().__init__()
+
+
+class MarioAIToolBox(QWidget):
+    def __init__(self, main):
+        super().__init__()
+        self.setWindowTitle('Tool Box')
+        self.main = main
+
+        self.setFixedSize(220, 480)
+        self.move(100, 100)
+
+        tabs = QTabWidget()
+        tabs.addTab(MarioAIListTool(), 'AI 목록')
+        tabs.addTab(MarioAICreateTool(), 'AI 생성')
+
+        vbox = QVBoxLayout()
+        vbox.addWidget(tabs)
+
+        self.setLayout(vbox)
+
+        self.show()
+
+    def closeEvent(self, event):
+        self.main.close_mario_ai()
+
+    def keyPressEvent(self, event):
+        if event.isAutoRepeat():
+            return
+
+        key = event.key()
+        if key == Qt.Key.Key_Escape:
+            self.main.close_mario_ai()
+
+
 class MarioGYM(QWidget):
     def __init__(self):
         super().__init__()
@@ -658,11 +715,15 @@ class MarioGYM(QWidget):
         self.mario_ai = MarioAI(self, self.game_level_combo_box.currentIndex(), self.game_speed_combo_box.currentIndex())
         self.mario_ai.show()
 
+        self.mario_ai_tool_box = MarioAIToolBox(self)
+        self.mario_ai_tool_box.show()
+
         self.hide()
 
     def close_mario_ai(self):
         self.mario_ai.frame_timer.stop_game()
         self.mario_ai.close()
+        self.mario_ai_tool_box.close()
         self.show()
 
     def run_mario_replay(self):
