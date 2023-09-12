@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='Mario_GYM',
-    version='0.1',
+    version='0.1.1',
     description='Preprocessed Retro GYM for Super Mario Bros.',
     author='OAO',
     author_email='pjh9996@naver.com',
@@ -10,7 +10,6 @@ setup(
     include_package_data=True,
     package_data={'': ['*.nes', ], },
     install_requires=[
-        'numpy==1.19.5',
         'gym==0.17.3',
         'gym-retro==0.8.0',
         'PyQt6-sip==13.2.1',
