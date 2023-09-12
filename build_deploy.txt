@@ -1,0 +1,8 @@
+# build
+python setup.py bdist_wheel
+
+# deploy
+python -m twine upload dist/*
+
+username: __token__
+password: {https://pypi.org/manage/account/token/ 에서 복사}
