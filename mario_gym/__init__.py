@@ -1,13 +1,16 @@
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QBrush, QColor
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QVBoxLayout, QLabel, QWidget, QPushButton, QComboBox, QTabWidget, QListWidget, QGroupBox
+from PyQt6.QtWidgets import QApplication, QVBoxLayout, QLabel, QWidget, QPushButton, QComboBox, QTabWidget, QListWidget, QFormLayout
 import retro
 import numpy as np
 import sys
 import random
 import warnings
+import datetime
 import time
 import os
+
+DATA_PATH = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'data')
 
 env: retro.RetroEnv = None
 
@@ -341,7 +344,9 @@ class Chromosome:
 
 
 class GeneticAlgorithm:
-    def __init__(self, layer=3, layer_size=[11, 8], generation_size=10, elitist_preserve_rate=0.1, static_mutation_rate=0.05):
+    def __init__(self, main, layer=3, layer_size=[11, 8], generation_size=10, elitist_preserve_rate=0.1, static_mutation_rate=0.05):
+        self.main = main
+        self.is_running = False
         self.generation = 0
         self.layer = layer
         self.layer_size = layer_size
@@ -349,6 +354,7 @@ class GeneticAlgorithm:
         self.elitist_preserve_rate = elitist_preserve_rate
         self.static_mutation_rate = static_mutation_rate
         self.chromosomes = [Chromosome(layer, layer_size) for _ in range(generation_size)]
+        self.fitness = []
         self.current_chromosome_index = 0
 
     def elitist_preserve_selection(self):
@@ -398,27 +404,35 @@ class GeneticAlgorithm:
             self.static_mutation(chromosome.b[i])
 
     def next_generation(self):
-        # folder = 'data4'
-        # if not os.path.exists(f'../{folder}'):
-        #     os.mkdir(f'../{folder}')
-        # if not os.path.exists(f'../{folder}/' + str(self.generation)):
-        #     os.mkdir(f'../{folder}/' + str(self.generation))
-        # for i in range(10):
-        #     if not os.path.exists(f'../{folder}/' + str(self.generation) + '/' + str(i)):
-        #         os.mkdir(f'../{folder}/' + str(self.generation) + '/' + str(i))
-        #     np.save(f'../{folder}/' + str(self.generation) + '/' + str(i) + '/w1.npy', self.chromosomes[i].w1)
-        #     np.save(f'../{folder}/' + str(self.generation) + '/' + str(i) + '/w2.npy', self.chromosomes[i].w2)
-        #     np.save(f'../{folder}/' + str(self.generation) + '/' + str(i) + '/w3.npy', self.chromosomes[i].w3)
-        #     np.save(f'../{folder}/' + str(self.generation) + '/' + str(i) + '/b1.npy', self.chromosomes[i].b1)
-        #     np.save(f'../{folder}/' + str(self.generation) + '/' + str(i) + '/b2.npy', self.chromosomes[i].b2)
-        #     np.save(f'../{folder}/' + str(self.generation) + '/' + str(i) + '/b3.npy', self.chromosomes[i].b3)
-        #     np.save(f'../{folder}/' + str(self.generation) + '/' + str(i) + '/fitness.npy',
-        #             np.array([self.chromosomes[i].fitness()]))
+        self.is_running = False
+
+        select_folder_name = self.main.mario_ai_tool_box.mario_ai_list_tool.current_ai
+        folder = os.path.join(DATA_PATH, select_folder_name)
+
+        generation_data_path = os.path.join(folder, str(self.generation))
+        if not os.path.exists(generation_data_path):
+            os.mkdir(generation_data_path)
+
+        for i in range(self.generation_size):
+            chromosome_data_path = os.path.join(generation_data_path, str(i))
+            if not os.path.exists(chromosome_data_path):
+                os.mkdir(chromosome_data_path)
+            for j in range(self.layer):
+                np.save(os.path.join(chromosome_data_path, f'w{j}.npy'), self.chromosomes[i].w[j])
+                np.save(os.path.join(chromosome_data_path, f'b{j}.npy'), self.chromosomes[i].b[j])
+                np.save(os.path.join(chromosome_data_path, f'fitness.npy'), np.array([self.chromosomes[i].fitness()]))
+
         print(f'{self.generation}세대 시뮬레이션 완료.')
+
+        np.save(os.path.join(folder, 'generation.npy'), np.array([self.generation]))
 
         next_chromosomes = []
         next_chromosomes.extend(self.elitist_preserve_selection())
+
+        self.fitness = np.append(self.fitness, next_chromosomes[0].fitness())
         print(f'엘리트 적합도: {next_chromosomes[0].fitness()}')
+
+        np.save(os.path.join(folder, 'fitness.npy'), self.fitness)
 
         while len(next_chromosomes) < self.generation_size:
             selected_chromosome = self.roulette_wheel_selection()
@@ -442,6 +456,87 @@ class GeneticAlgorithm:
         self.generation += 1
         self.current_chromosome_index = 0
 
+        self.is_running = True
+
+    def load_ai(self):
+        self.is_running = False
+
+        global env
+        env.reset()
+        try:
+            select_folder_name = self.main.mario_ai_tool_box.mario_ai_list_tool.current_ai
+            folder = os.path.join(DATA_PATH, select_folder_name)
+
+            network = [0, 0, 0, 1, 0]
+            network_file_path = os.path.join(folder, 'network.npy')
+            if os.path.exists(network_file_path):
+                network = np.load(network_file_path)
+
+            self.layer = [2, 3, 4, 5][network[0]]
+            self.layer_size = []
+            if self.layer == 2:
+                if network[1] == 0:
+                    self.layer_size = [11]
+                elif network[1] == 1:
+                    self.layer_size = [128]
+                elif network[1] == 2:
+                    self.layer_size = [11]
+            elif self.layer == 3:
+                if network[1] == 0:
+                    self.layer_size = [16, 8]
+                elif network[1] == 1:
+                    self.layer_size = [128, 256]
+                elif network[1] == 2:
+                    self.layer_size = [128, 32]
+            elif self.layer == 4:
+                if network[1] == 0:
+                    self.layer_size = [32, 16, 8]
+                elif network[1] == 1:
+                    self.layer_size = [128, 256, 512]
+                elif network[1] == 2:
+                    self.layer_size = [128, 64, 32]
+            elif self.layer == 5:
+                if network[1] == 0:
+                    self.layer_size = [64, 32, 16, 8]
+                elif network[1] == 1:
+                    self.layer_size = [128, 256, 512, 1024]
+                elif network[1] == 2:
+                    self.layer_size = [128, 64, 32]
+            else:
+                self.layer_size = []
+            self.generation_size = [10, 20, 30, 40, 50][network[2]]
+            self.elitist_preserve_rate = [0, 0.1, 0.2, 0.3, 0.4][network[3]]
+            self.static_mutation_rate = [0.05, 0.1, 0.15, 0.2, 0.25][network[4]]
+
+            self.generation = 0
+            generation_file_path = os.path.join(folder, 'generation.npy')
+            if os.path.exists(generation_file_path):
+                self.generation = np.load(generation_file_path)[0]
+
+            self.fitness = []
+            fitness_file_path = os.path.join(folder, 'fitness.npy')
+            if os.path.exists(fitness_file_path):
+                self.fitness = np.load(fitness_file_path)[:-1]
+
+            self.chromosomes = []
+
+            for i in range(self.generation_size):
+                chromosome = Chromosome(self.layer, self.layer_size)
+                if os.path.exists(os.path.join(folder, str(self.generation))):
+                    for j in range(self.layer):
+                        chromosome.w[j] = np.load(os.path.join(DATA_PATH, select_folder_name, str(self.generation), str(i), f'w{j}.npy'))
+                        chromosome.b[j] = np.load(os.path.join(DATA_PATH, select_folder_name, str(self.generation), str(i), f'b{j}.npy'))
+                self.chromosomes.append(chromosome)
+
+            self.current_chromosome_index = 0
+
+            print(f'AI 선택 {select_folder_name}')
+            print(f'== {self.generation} 세대 ==')
+        except:
+            pass
+
+        self.is_running = True
+
 
 class MarioAI(QWidget):
     def __init__(self, main, game_level, game_speed):
@@ -450,7 +545,7 @@ class MarioAI(QWidget):
         self.main = main
         self.game_speed = game_speed
 
-        self.ga = GeneticAlgorithm(5, [44, 32, 21, 10], 30, 0.1, 0.1)
+        self.ga = GeneticAlgorithm(main, 5, [44, 32, 21, 10], 30, 0.1, 0.1)
 
         global env
         if env is not None:
@@ -542,33 +637,34 @@ class MarioAI(QWidget):
 
         input_data = input_data.flatten()
 
-        current_chromosome = self.ga.chromosomes[self.ga.current_chromosome_index]
-        current_chromosome.frames += 1
-        current_chromosome.distance = ram[0x006D] * 256 + ram[0x0086]
+        if self.ga.is_running:
+            current_chromosome = self.ga.chromosomes[self.ga.current_chromosome_index]
+            current_chromosome.frames += 1
+            current_chromosome.distance = ram[0x006D] * 256 + ram[0x0086]
 
-        if current_chromosome.max_distance < current_chromosome.distance:
-            current_chromosome.max_distance = current_chromosome.distance
-            current_chromosome.stop_frame = 0
-        else:
-            current_chromosome.stop_frame += 1
+            if current_chromosome.max_distance < current_chromosome.distance:
+                current_chromosome.max_distance = current_chromosome.distance
+                current_chromosome.stop_frame = 0
+            else:
+                current_chromosome.stop_frame += 1
 
-        if ram[0x001D] == 3 or ram[0x0E] in (0x0B, 0x06) or ram[0xB5] == 2 or current_chromosome.stop_frame > 180:
-            if ram[0x001D] == 3:
-                current_chromosome.win = 1
+            if ram[0x001D] == 3 or ram[0x0E] in (0x0B, 0x06) or ram[0xB5] == 2 or current_chromosome.stop_frame > 180:
+                if ram[0x001D] == 3:
+                    current_chromosome.win = 1
 
-            print(f'{self.ga.current_chromosome_index + 1}번 마리오: {current_chromosome.fitness()}')
+                print(f'{self.ga.current_chromosome_index + 1}번 마리오: {current_chromosome.fitness()}')
 
-            self.ga.current_chromosome_index += 1
+                self.ga.current_chromosome_index += 1
 
-            if self.ga.current_chromosome_index == self.ga.generation_size:
-                self.ga.next_generation()
-                print(f'== {self.ga.generation}세대 ==')
+                if self.ga.current_chromosome_index == self.ga.generation_size:
+                    self.ga.next_generation()
+                    print(f'== {self.ga.generation}세대 ==')
 
-            self.env.reset()
-        else:
-            predict = current_chromosome.predict(input_data)
-            press_buttons = np.array([predict[5], 0, 0, 0, predict[0], predict[1], predict[2], predict[3], predict[4]])
-            self.env.step(press_buttons)
+                self.env.reset()
+            else:
+                predict = current_chromosome.predict(input_data)
+                press_buttons = np.array([predict[5], 0, 0, 0, predict[0], predict[1], predict[2], predict[3], predict[4]])
+                self.env.step(press_buttons)
 
         self.frame_timer.end_frame_signal.emit()
 
@@ -591,28 +687,143 @@ class MarioAI(QWidget):
 
 
 class MarioAIListTool(QWidget):
-    def __init__(self):
+    def __init__(self, main):
         super().__init__()
+        self.main = main
 
-        self.ai_list = dict()
+        self.current_ai = None
+
+        self.ai_list = os.listdir(DATA_PATH)
+        self.ai_list.reverse()
         self.ai_list_widget = QListWidget()
-        self.ai_list_widget.setFixedHeight(400)
-        for i in range(50):
-            self.ai_list_widget.addItem(f'asdf {i}')
-        self.ai_list_widget.clicked.connect(self.select_ai)
+        for ai in self.ai_list:
+            self.ai_list_widget.addItem(ai)
+        self.ai_list_widget.clicked.connect(self.change_current_ai)
+
+        self.select_button = QPushButton('선택')
+        self.select_button.clicked.connect(self.select_ai)
+
+        self.form_layout = QFormLayout()
+
+        self.ai_name = QLabel()
+        self.layer_label = QLabel()
+        self.layer_size_label = QLabel()
+        self.generation_size_label = QLabel()
+        self.elitist_preserve_rate_label = QLabel()
+        self.static_mutation_rate_label = QLabel()
+
+        self.form_layout.addRow("신경망 크기: ", self.layer_label)
+        self.form_layout.addRow("신경망 형태: ", self.layer_size_label)
+        self.form_layout.addRow("세대 크기: ", self.generation_size_label)
+        self.form_layout.addRow("엘리트 보존: ", self.elitist_preserve_rate_label)
+        self.form_layout.addRow("변이: ", self.static_mutation_rate_label)
 
         ai_list_layout = QVBoxLayout()
         ai_list_layout.addWidget(self.ai_list_widget)
+        ai_list_layout.addWidget(self.select_button)
+        ai_list_layout.addWidget(self.ai_name)
+        ai_list_layout.addLayout(self.form_layout)
 
         self.setLayout(ai_list_layout)
 
+    def change_current_ai(self):
+        self.current_ai = self.ai_list_widget.currentItem().text()
+
+        select_folder_name = self.main.mario_ai_tool_box.mario_ai_list_tool.current_ai
+        folder = os.path.join(DATA_PATH, select_folder_name)
+        generation_file_path = os.path.join(folder, 'generation.npy')
+        print(generation_file_path)
+        if os.path.exists(generation_file_path):
+            self.generation = np.load(generation_file_path)[0]
+            print(self.generation)
+
     def select_ai(self):
-        self.current_vote_id = self.ai_list_widget.currentItem().text()
+        if self.current_ai is not None:
+            network = np.load(os.path.join(DATA_PATH, self.current_ai, 'network.npy'))
+            self.ai_name.setText(self.current_ai)
+            self.layer_label.setText(['2', '3', '4', '5'][network[0]])
+            self.layer_size_label.setText(['수렴형', '발산형', '방추형'][network[1]])
+            self.generation_size_label.setText(['10', '20', '30', '40', '50'][network[2]])
+            self.elitist_preserve_rate_label.setText(['0%', '10%', '20%', '30%', '40%'][network[3]])
+            self.static_mutation_rate_label.setText(['5%', '10%', '15%', '20%', '25%'][network[4]])
+
+            try:
+                self.main.mario_ai.ga.load_ai()
+                self.main.mario_ai.frame_timer.end_frame_signal.emit()
+            except:
+                pass
 
 
 class MarioAICreateTool(QWidget):
-    def __init__(self):
+    def __init__(self, main):
         super().__init__()
+        self.main = main
+
+        form_layout = QFormLayout()
+
+        self.layer_combo_box = QComboBox()
+        self.layer_combo_box.addItem('2')
+        self.layer_combo_box.addItem('3')
+        self.layer_combo_box.addItem('4')
+        self.layer_combo_box.addItem('5')
+
+        self.layer_size_combo_box = QComboBox()
+        self.layer_size_combo_box.addItem('수렴형')
+        self.layer_size_combo_box.addItem('발산형')
+        self.layer_size_combo_box.addItem('방추형')
+
+        self.generation_size_combo_box = QComboBox()
+        self.generation_size_combo_box.addItem('10')
+        self.generation_size_combo_box.addItem('20')
+        self.generation_size_combo_box.addItem('30')
+        self.generation_size_combo_box.addItem('40')
+        self.generation_size_combo_box.addItem('50')
+
+        self.elitist_preserve_rate_combo_box = QComboBox()
+        self.elitist_preserve_rate_combo_box.addItem('0%')
+        self.elitist_preserve_rate_combo_box.addItem('10%')
+        self.elitist_preserve_rate_combo_box.addItem('20%')
+        self.elitist_preserve_rate_combo_box.addItem('30%')
+        self.elitist_preserve_rate_combo_box.addItem('40%')
+        self.elitist_preserve_rate_combo_box.setCurrentIndex(1)
+
+        self.static_mutation_rate_combo_box = QComboBox()
+        self.static_mutation_rate_combo_box.addItem('5%')
+        self.static_mutation_rate_combo_box.addItem('10%')
+        self.static_mutation_rate_combo_box.addItem('15%')
+        self.static_mutation_rate_combo_box.addItem('20%')
+        self.static_mutation_rate_combo_box.addItem('25%')
+
+        create_ai_button = QPushButton("생성")
+        create_ai_button.clicked.connect(self.create_ai)
+
+        form_layout.addRow("신경망 크기: ", self.layer_combo_box)
+        form_layout.addRow("신경망 형태: ", self.layer_size_combo_box)
+        form_layout.addRow("세대 크기: ", self.generation_size_combo_box)
+        form_layout.addRow("엘리트 보존: ", self.elitist_preserve_rate_combo_box)
+        form_layout.addRow("변이: ", self.static_mutation_rate_combo_box)
+        form_layout.addRow("", create_ai_button)
+
+        self.setLayout(form_layout)
+
+    def create_ai(self):
+        folder_name = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S-%fZ")
+        os.mkdir(os.path.join(DATA_PATH, folder_name))
+
+        layer = self.layer_combo_box.currentIndex()
+        layer_size = self.layer_size_combo_box.currentIndex()
+        generation_size = self.generation_size_combo_box.currentIndex()
+        elitist_preserve_rate = self.elitist_preserve_rate_combo_box.currentIndex()
+        static_mutation_rate = self.static_mutation_rate_combo_box.currentIndex()
+
+        np.save(os.path.join(DATA_PATH, folder_name, 'network.npy'), np.array([layer, layer_size, generation_size, elitist_preserve_rate, static_mutation_rate]))
+
+        try:
+            self.main.mario_ai_tool_box.mario_ai_list_tool.ai_list.insert(0, folder_name)
+            self.main.mario_ai_tool_box.mario_ai_list_tool.ai_list_widget.insertItem(0, folder_name)
+            self.main.mario_ai_tool_box.tabs.setCurrentIndex(0)
+        except:
+            pass
 
 
 class MarioAIToolBox(QWidget):
@@ -621,15 +832,18 @@ class MarioAIToolBox(QWidget):
         self.setWindowTitle('Tool Box')
         self.main = main
 
-        self.setFixedSize(220, 480)
+        self.setFixedSize(290, 480)
         self.move(100, 100)
 
-        tabs = QTabWidget()
-        tabs.addTab(MarioAIListTool(), 'AI 목록')
-        tabs.addTab(MarioAICreateTool(), 'AI 생성')
+        self.mario_ai_list_tool = MarioAIListTool(main)
+        self.mario_ai_create_tool = MarioAICreateTool(main)
+
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self.mario_ai_list_tool, 'AI 목록')
+        self.tabs.addTab(self.mario_ai_create_tool, 'AI 생성')
 
         vbox = QVBoxLayout()
-        vbox.addWidget(tabs)
+        vbox.addWidget(self.tabs)
 
         self.setLayout(vbox)
 
@@ -755,6 +969,8 @@ def run():
 
 
 try:
+    if not os.path.exists(DATA_PATH):
+        os.mkdir(DATA_PATH)
     if not os.path.exists(os.path.join(retro.data.path(), 'stable', 'SuperMarioBros-Nes', 'rom.nes')):
         rom_file_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'Super Mario Bros. (World).nes')
         rom_file = open(rom_file_path, "rb")
