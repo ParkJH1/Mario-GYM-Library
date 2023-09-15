@@ -405,6 +405,7 @@ class GeneticAlgorithm:
 
     def elitist_preserve_selection(self):
         sort_chromosomes = sorted(self.chromosomes, key=lambda x: x.fitness(), reverse=True)
+        self.fitness = np.append(self.fitness, sort_chromosomes[0].fitness())
         return sort_chromosomes[:int(self.generation_size * self.elitist_preserve_rate)]
 
     def roulette_wheel_selection(self):
@@ -469,8 +470,6 @@ class GeneticAlgorithm:
 
         next_chromosomes = []
         next_chromosomes.extend(self.elitist_preserve_selection())
-
-        self.fitness = np.append(self.fitness, next_chromosomes[0].fitness())
 
         np.save(os.path.join(folder, 'fitness.npy'), self.fitness)
 
@@ -642,6 +641,10 @@ class MarioAI(QWidget):
                 except:
                     pass
                 self.ga.next_generation()
+                try:
+                    self.main.mario_ai_graph.update()
+                except:
+                    pass
 
             self.env.reset()
         else:
@@ -1194,6 +1197,66 @@ class MarioAINetwork(QWidget):
             self.main.close_mario_ai()
 
 
+class MarioAIGraph(QWidget):
+    def __init__(self, main):
+        super().__init__()
+        self.setWindowTitle('Graph')
+        self.main = main
+
+        self.setFixedSize(1570, 300)
+        self.move(100, 620)
+
+        self.show()
+
+    def paintEvent(self, e):
+        painter = QPainter()
+        painter.begin(self)
+
+        x_len = len(self.main.mario_ai.ga.fitness)
+        x_gap = 0
+        y_max = 0
+        if x_len >= 2:
+            x_gap = 1550 // (x_len - 1)
+
+        if x_len >= 1:
+            y_max = np.max(self.main.mario_ai.ga.fitness)
+
+        px = -1
+        py = -1
+
+        painter.setPen(QPen(Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+        for i in range(0, x_len):
+            x = x_gap * i + 10
+            y = int(280 * self.main.mario_ai.ga.fitness[i] / y_max)
+
+            if px != -1:
+                painter.drawLine(px, 290 - py, x, 290 - y)
+
+            px = x
+            py = y
+
+        painter.setPen(QPen(Qt.GlobalColor.red, 2, Qt.PenStyle.SolidLine))
+        painter.setBrush(QBrush(Qt.GlobalColor.red))
+        for i in range(0, x_len):
+            x = x_gap * i + 10
+            y = int(280 * self.main.mario_ai.ga.fitness[i] / y_max)
+
+            painter.drawEllipse(x - 2, 290 - y - 2, 2 * 2, 2 * 2)
+
+        painter.end()
+
+    def closeEvent(self, event):
+        self.main.close_mario_ai()
+
+    def keyPressEvent(self, event):
+        if event.isAutoRepeat():
+            return
+
+        key = event.key()
+        if key == Qt.Key.Key_Escape:
+            self.main.close_mario_ai()
+
+
 class MarioGYM(QWidget):
     def __init__(self):
         super().__init__()
@@ -1273,7 +1336,6 @@ class MarioGYM(QWidget):
     def close_mario_ai_tool_box(self):
         self.close_mario_ai()
         self.mario_ai_tool_box.close()
-        self.mario_ai_info.close()
         self.show()
 
     def run_mario_ai(self, select_folder_name):
@@ -1283,6 +1345,8 @@ class MarioGYM(QWidget):
         self.mario_ai_info.show()
         self.mario_ai_network = MarioAINetwork(self)
         self.mario_ai_network.show()
+        self.mario_ai_graph = MarioAIGraph(self)
+        self.mario_ai_graph.show()
         self.mario_ai = MarioAI(self, self.game_level_combo_box.currentIndex(), self.game_speed_combo_box.currentIndex(), select_folder_name)
         self.mario_ai.show()
 
@@ -1293,7 +1357,7 @@ class MarioGYM(QWidget):
             self.mario_ai_tile_map.close()
             self.mario_ai_info.close()
             self.mario_ai_network.close()
-            plt.close()
+            self.mario_ai_graph.close()
             self.mario_ai = None
 
     def run_mario_replay(self):
@@ -1313,6 +1377,7 @@ class MarioGYM(QWidget):
 
 def exception_hook(except_type, value, traceback):
     print(except_type, value, traceback)
+    print(traceback.format_exc())
     exit(1)
 
 
