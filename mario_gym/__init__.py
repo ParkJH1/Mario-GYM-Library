@@ -1,6 +1,6 @@
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QBrush, QColor
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QVBoxLayout, QLabel, QWidget, QPushButton, QComboBox, QTabWidget, QListWidget, QFormLayout
+from PyQt6.QtWidgets import QApplication, QVBoxLayout, QHBoxLayout, QLabel, QWidget, QPushButton, QComboBox, QTabWidget, QListWidget, QFormLayout, QLineEdit
 import retro
 import numpy as np
 import sys
@@ -22,7 +22,6 @@ class FrameTimer(QThread):
     def __init__(self, game_speed):
         super().__init__()
         self.game_speed = game_speed
-        self.end_frame = True
         self.next_frame_ready = False
         self.is_game_running = True
 
@@ -30,8 +29,6 @@ class FrameTimer(QThread):
         if self.game_speed == 2:
             self.next_frame_ready = True
             self.update_frame_signal.emit()
-        else:
-            self.end_frame = True
 
     def stop_game(self):
         self.is_game_running = False
@@ -46,9 +43,6 @@ class FrameTimer(QThread):
                 else:
                     self.msleep(1000 // 60)
                 self.next_frame_ready = True
-                while not self.end_frame:
-                    self.msleep(1)
-                self.end_frame = False
                 self.update_frame_signal.emit()
         else:
             self.end_frame_event()
@@ -237,6 +231,14 @@ class MarioTileMap(QWidget):
     def closeEvent(self, event):
         self.main.close_mario()
 
+    def keyPressEvent(self, event):
+        if event.isAutoRepeat():
+            return
+
+        key = event.key()
+        if key == Qt.Key.Key_Escape:
+            self.main.close_mario()
+
 
 class MarioKeyViewer(QWidget):
     def __init__(self, main):
@@ -297,6 +299,14 @@ class MarioKeyViewer(QWidget):
     def closeEvent(self, event):
         self.main.close_mario()
 
+    def keyPressEvent(self, event):
+        if event.isAutoRepeat():
+            return
+
+        key = event.key()
+        if key == Qt.Key.Key_Escape:
+            self.main.close_mario()
+
 
 warnings.filterwarnings('error')
 
@@ -344,17 +354,53 @@ class Chromosome:
 
 
 class GeneticAlgorithm:
-    def __init__(self, main, layer=3, layer_size=[11, 8], generation_size=10, elitist_preserve_rate=0.1, static_mutation_rate=0.05):
+    def __init__(self, main, select_folder_name):
         self.main = main
-        self.is_running = False
+        self.select_folder_name = select_folder_name
+
+        folder = os.path.join(DATA_PATH, select_folder_name)
+
+        self.network = [0, 0, 1, 0]
+        network_file_path = os.path.join(folder, 'network.npy')
+        if os.path.exists(network_file_path):
+            self.network = np.load(network_file_path)
+
+        self.layer = [2, 3, 4][self.network[0]]
+        self.layer_size = []
+        if self.layer == 2:
+            self.layer_size = [11]
+        elif self.layer == 3:
+            self.layer_size = [16, 8]
+        elif self.layer == 4:
+            self.layer_size = [32, 16, 8]
+        elif self.layer == 5:
+            self.layer_size = [64, 32, 16, 8]
+        else:
+            self.layer_size = []
+        self.generation_size = [10, 20, 30, 40, 50][self.network[1]]
+        self.elitist_preserve_rate = [0, 0.1, 0.2, 0.3, 0.4][self.network[2]]
+        self.static_mutation_rate = [0.05, 0.1, 0.15, 0.2, 0.25][self.network[3]]
+
         self.generation = 0
-        self.layer = layer
-        self.layer_size = layer_size
-        self.generation_size = generation_size
-        self.elitist_preserve_rate = elitist_preserve_rate
-        self.static_mutation_rate = static_mutation_rate
-        self.chromosomes = [Chromosome(layer, layer_size) for _ in range(generation_size)]
+        generation_file_path = os.path.join(folder, 'generation.npy')
+        if os.path.exists(generation_file_path):
+            self.generation = np.load(generation_file_path)[0]
+
         self.fitness = []
+        fitness_file_path = os.path.join(folder, 'fitness.npy')
+        if os.path.exists(fitness_file_path):
+            self.fitness = np.load(fitness_file_path)[:-1]
+
+        self.chromosomes = []
+
+        for i in range(self.generation_size):
+            chromosome = Chromosome(self.layer, self.layer_size)
+            if os.path.exists(os.path.join(folder, str(self.generation))):
+                for j in range(self.layer):
+                    chromosome.w[j] = np.load(os.path.join(DATA_PATH, select_folder_name, str(self.generation), str(i), f'w{j}.npy'))
+                    chromosome.b[j] = np.load(os.path.join(DATA_PATH, select_folder_name, str(self.generation), str(i), f'b{j}.npy'))
+            self.chromosomes.append(chromosome)
+
         self.current_chromosome_index = 0
 
     def elitist_preserve_selection(self):
@@ -404,10 +450,7 @@ class GeneticAlgorithm:
             self.static_mutation(chromosome.b[i])
 
     def next_generation(self):
-        self.is_running = False
-
-        select_folder_name = self.main.mario_ai_tool_box.mario_ai_list_tool.current_ai
-        folder = os.path.join(DATA_PATH, select_folder_name)
+        folder = os.path.join(DATA_PATH, self.select_folder_name)
 
         generation_data_path = os.path.join(folder, str(self.generation))
         if not os.path.exists(generation_data_path):
@@ -422,15 +465,12 @@ class GeneticAlgorithm:
                 np.save(os.path.join(chromosome_data_path, f'b{j}.npy'), self.chromosomes[i].b[j])
                 np.save(os.path.join(chromosome_data_path, f'fitness.npy'), np.array([self.chromosomes[i].fitness()]))
 
-        print(f'{self.generation}세대 시뮬레이션 완료.')
-
         np.save(os.path.join(folder, 'generation.npy'), np.array([self.generation]))
 
         next_chromosomes = []
         next_chromosomes.extend(self.elitist_preserve_selection())
 
         self.fitness = np.append(self.fitness, next_chromosomes[0].fitness())
-        print(f'엘리트 적합도: {next_chromosomes[0].fitness()}')
 
         np.save(os.path.join(folder, 'fitness.npy'), self.fitness)
 
@@ -456,96 +496,21 @@ class GeneticAlgorithm:
         self.generation += 1
         self.current_chromosome_index = 0
 
-        self.is_running = True
-
-    def load_ai(self):
-        self.is_running = False
-
-        global env
-        env.reset()
-        try:
-            select_folder_name = self.main.mario_ai_tool_box.mario_ai_list_tool.current_ai
-            folder = os.path.join(DATA_PATH, select_folder_name)
-
-            network = [0, 0, 0, 1, 0]
-            network_file_path = os.path.join(folder, 'network.npy')
-            if os.path.exists(network_file_path):
-                network = np.load(network_file_path)
-
-            self.layer = [2, 3, 4, 5][network[0]]
-            self.layer_size = []
-            if self.layer == 2:
-                if network[1] == 0:
-                    self.layer_size = [11]
-                elif network[1] == 1:
-                    self.layer_size = [128]
-                elif network[1] == 2:
-                    self.layer_size = [11]
-            elif self.layer == 3:
-                if network[1] == 0:
-                    self.layer_size = [16, 8]
-                elif network[1] == 1:
-                    self.layer_size = [128, 256]
-                elif network[1] == 2:
-                    self.layer_size = [128, 32]
-            elif self.layer == 4:
-                if network[1] == 0:
-                    self.layer_size = [32, 16, 8]
-                elif network[1] == 1:
-                    self.layer_size = [128, 256, 512]
-                elif network[1] == 2:
-                    self.layer_size = [128, 64, 32]
-            elif self.layer == 5:
-                if network[1] == 0:
-                    self.layer_size = [64, 32, 16, 8]
-                elif network[1] == 1:
-                    self.layer_size = [128, 256, 512, 1024]
-                elif network[1] == 2:
-                    self.layer_size = [128, 64, 32]
-            else:
-                self.layer_size = []
-            self.generation_size = [10, 20, 30, 40, 50][network[2]]
-            self.elitist_preserve_rate = [0, 0.1, 0.2, 0.3, 0.4][network[3]]
-            self.static_mutation_rate = [0.05, 0.1, 0.15, 0.2, 0.25][network[4]]
-
-            self.generation = 0
-            generation_file_path = os.path.join(folder, 'generation.npy')
-            if os.path.exists(generation_file_path):
-                self.generation = np.load(generation_file_path)[0]
-
-            self.fitness = []
-            fitness_file_path = os.path.join(folder, 'fitness.npy')
-            if os.path.exists(fitness_file_path):
-                self.fitness = np.load(fitness_file_path)[:-1]
-
-            self.chromosomes = []
-
-            for i in range(self.generation_size):
-                chromosome = Chromosome(self.layer, self.layer_size)
-                if os.path.exists(os.path.join(folder, str(self.generation))):
-                    for j in range(self.layer):
-                        chromosome.w[j] = np.load(os.path.join(DATA_PATH, select_folder_name, str(self.generation), str(i), f'w{j}.npy'))
-                        chromosome.b[j] = np.load(os.path.join(DATA_PATH, select_folder_name, str(self.generation), str(i), f'b{j}.npy'))
-                self.chromosomes.append(chromosome)
-
-            self.current_chromosome_index = 0
-
-            print(f'AI 선택 {select_folder_name}')
-            print(f'== {self.generation} 세대 ==')
-        except:
-            pass
-
-        self.is_running = True
-
 
 class MarioAI(QWidget):
-    def __init__(self, main, game_level, game_speed):
+    def __init__(self, main, game_level, game_speed, select_folder_name):
         super().__init__()
-        self.setWindowTitle('Mario AI')
+        name = np.load(os.path.join(DATA_PATH, select_folder_name, 'name.npy'))[0]
+        self.setWindowTitle(name)
         self.main = main
         self.game_speed = game_speed
 
-        self.ga = GeneticAlgorithm(main, 5, [44, 32, 21, 10], 30, 0.1, 0.1)
+        self.ga = GeneticAlgorithm(main, select_folder_name)
+
+        self.elite_fitness = 0
+        if len(self.ga.fitness):
+            self.elite_fitness = self.ga.fitness[-1]
+        self.current_fitness = 0
 
         global env
         if env is not None:
@@ -564,11 +529,18 @@ class MarioAI(QWidget):
         self.screen_label.setGeometry(0, 0, self.screen_width, self.screen_height)
 
         self.press_buttons = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0])
+        self.predict = np.array([0, 0, 0, 0, 0, 0])
 
         self.frame_timer = FrameTimer(self.game_speed)
         self.frame_timer.end_frame_signal.connect(self.frame_timer.end_frame_event)
         self.frame_timer.update_frame_signal.connect(self.update_frame)
         self.frame_timer.start()
+
+        screen = self.env.get_screen()
+        qimage = QImage(screen, screen.shape[1], screen.shape[0], QImage.Format.Format_RGB888)
+        pixmap = QPixmap(qimage)
+        pixmap = pixmap.scaled(self.screen_width, self.screen_height, Qt.AspectRatioMode.IgnoreAspectRatio)
+        self.screen_label.setPixmap(pixmap)
 
     def update_frame(self):
         screen = self.env.get_screen()
@@ -637,40 +609,56 @@ class MarioAI(QWidget):
 
         input_data = input_data.flatten()
 
-        if self.ga.is_running:
-            current_chromosome = self.ga.chromosomes[self.ga.current_chromosome_index]
-            current_chromosome.frames += 1
-            current_chromosome.distance = ram[0x006D] * 256 + ram[0x0086]
+        current_chromosome = self.ga.chromosomes[self.ga.current_chromosome_index]
+        current_chromosome.frames += 1
+        current_chromosome.distance = ram[0x006D] * 256 + ram[0x0086]
 
-            if current_chromosome.max_distance < current_chromosome.distance:
-                current_chromosome.max_distance = current_chromosome.distance
-                current_chromosome.stop_frame = 0
-            else:
-                current_chromosome.stop_frame += 1
+        if current_chromosome.max_distance < current_chromosome.distance:
+            current_chromosome.max_distance = current_chromosome.distance
+            current_chromosome.stop_frame = 0
+        else:
+            current_chromosome.stop_frame += 1
 
-            if ram[0x001D] == 3 or ram[0x0E] in (0x0B, 0x06) or ram[0xB5] == 2 or current_chromosome.stop_frame > 180:
-                if ram[0x001D] == 3:
-                    current_chromosome.win = 1
+        if ram[0x001D] == 3 or ram[0x0E] in (0x0B, 0x06) or ram[0xB5] == 2 or current_chromosome.stop_frame > 180:
+            if ram[0x001D] == 3:
+                current_chromosome.win = 1
 
-                print(f'{self.ga.current_chromosome_index + 1}번 마리오: {current_chromosome.fitness()}')
+            self.current_fitness = current_chromosome.fitness()
 
-                self.ga.current_chromosome_index += 1
+            if self.elite_fitness < self.current_fitness:
+                self.elite_fitness = self.current_fitness
 
-                if self.ga.current_chromosome_index == self.ga.generation_size:
-                    self.ga.next_generation()
-                    print(f'== {self.ga.generation}세대 ==')
+            try:
+                self.main.mario_ai_info.fitness_list_widget.addItem(f'{self.ga.current_chromosome_index + 1}번: {self.current_fitness}')
+                self.main.mario_ai_info.elite_fitness_label.setText(f'{self.elite_fitness}')
+            except:
+                pass
 
-                self.env.reset()
-            else:
-                predict = current_chromosome.predict(input_data)
-                press_buttons = np.array([predict[5], 0, 0, 0, predict[0], predict[1], predict[2], predict[3], predict[4]])
-                self.env.step(press_buttons)
+            self.ga.current_chromosome_index += 1
+
+            if self.ga.current_chromosome_index == self.ga.generation_size:
+                try:
+                    self.main.mario_ai_info.fitness_list_widget.clear()
+                except:
+                    pass
+                self.ga.next_generation()
+
+            self.env.reset()
+        else:
+            self.predict = current_chromosome.predict(input_data)
+            self.press_buttons = np.array([self.predict[5], 0, 0, 0, self.predict[0], self.predict[1], self.predict[2], self.predict[3], self.predict[4]])
+            self.env.step(self.press_buttons)
 
         self.frame_timer.end_frame_signal.emit()
 
         try:
-            self.main.mario_tile_map.update()
-            self.main.mario_key_viewer.update()
+            self.main.mario_ai_tile_map.update()
+            self.main.mario_ai_info.generation_label.setText(f'{self.ga.generation} 세대')
+            self.main.mario_ai_info.current_chromosome_index_label.setText(f'{self.ga.current_chromosome_index} / {self.ga.generation_size}')
+            self.current_fitness = current_chromosome.fitness()
+            self.main.mario_ai_info.elite_fitness_label.setText(f'{self.current_fitness if self.elite_fitness < self.current_fitness else self.elite_fitness}')
+            self.main.mario_ai_info.fitness_label.setText(f'{self.current_fitness}')
+            self.main.mario_ai_network.update()
         except:
             pass
 
@@ -697,7 +685,8 @@ class MarioAIListTool(QWidget):
         self.ai_list.reverse()
         self.ai_list_widget = QListWidget()
         for ai in self.ai_list:
-            self.ai_list_widget.addItem(ai)
+            name = np.load(os.path.join(DATA_PATH, ai, 'name.npy'))[0]
+            self.ai_list_widget.addItem(name)
         self.ai_list_widget.clicked.connect(self.change_current_ai)
 
         self.select_button = QPushButton('선택')
@@ -705,15 +694,17 @@ class MarioAIListTool(QWidget):
 
         self.form_layout = QFormLayout()
 
-        self.ai_name = QLabel()
+        self.generation_label = QLabel()
+        self.elite_fitness_label = QLabel()
+
         self.layer_label = QLabel()
-        self.layer_size_label = QLabel()
         self.generation_size_label = QLabel()
         self.elitist_preserve_rate_label = QLabel()
         self.static_mutation_rate_label = QLabel()
 
+        self.form_layout.addRow("학습된 세대: ", self.generation_label)
+        self.form_layout.addRow("엘리트 적합도: ", self.elite_fitness_label)
         self.form_layout.addRow("신경망 크기: ", self.layer_label)
-        self.form_layout.addRow("신경망 형태: ", self.layer_size_label)
         self.form_layout.addRow("세대 크기: ", self.generation_size_label)
         self.form_layout.addRow("엘리트 보존: ", self.elitist_preserve_rate_label)
         self.form_layout.addRow("변이: ", self.static_mutation_rate_label)
@@ -721,37 +712,36 @@ class MarioAIListTool(QWidget):
         ai_list_layout = QVBoxLayout()
         ai_list_layout.addWidget(self.ai_list_widget)
         ai_list_layout.addWidget(self.select_button)
-        ai_list_layout.addWidget(self.ai_name)
         ai_list_layout.addLayout(self.form_layout)
 
         self.setLayout(ai_list_layout)
 
     def change_current_ai(self):
-        self.current_ai = self.ai_list_widget.currentItem().text()
+        self.current_ai = self.ai_list_widget.currentRow()
 
-        select_folder_name = self.main.mario_ai_tool_box.mario_ai_list_tool.current_ai
-        folder = os.path.join(DATA_PATH, select_folder_name)
-        generation_file_path = os.path.join(folder, 'generation.npy')
-        print(generation_file_path)
-        if os.path.exists(generation_file_path):
-            self.generation = np.load(generation_file_path)[0]
-            print(self.generation)
+        network = np.load(os.path.join(DATA_PATH, self.ai_list[self.current_ai], 'network.npy'))
+
+        if os.path.exists(os.path.join(DATA_PATH, self.ai_list[self.current_ai], 'generation.npy')):
+            generation = np.load(os.path.join(DATA_PATH, self.ai_list[self.current_ai], 'generation.npy'))[0]
+            self.generation_label.setText(f'{generation}세대')
+        else:
+            self.generation_label.setText('없음')
+
+        if os.path.exists(os.path.join(DATA_PATH, self.ai_list[self.current_ai], 'fitness.npy')):
+            elite_fitness = np.load(os.path.join(DATA_PATH, self.ai_list[self.current_ai], 'fitness.npy'))[-1]
+            self.elite_fitness_label.setText(f'{elite_fitness}')
+        else:
+            self.elite_fitness_label.setText('없음')
+
+        self.layer_label.setText(['2', '3', '4'][network[0]])
+        self.generation_size_label.setText(['10', '20', '30', '40', '50'][network[1]])
+        self.elitist_preserve_rate_label.setText(['0%', '10%', '20%', '30%', '40%'][network[2]])
+        self.static_mutation_rate_label.setText(['5%', '10%', '15%', '20%', '25%'][network[3]])
 
     def select_ai(self):
         if self.current_ai is not None:
-            network = np.load(os.path.join(DATA_PATH, self.current_ai, 'network.npy'))
-            self.ai_name.setText(self.current_ai)
-            self.layer_label.setText(['2', '3', '4', '5'][network[0]])
-            self.layer_size_label.setText(['수렴형', '발산형', '방추형'][network[1]])
-            self.generation_size_label.setText(['10', '20', '30', '40', '50'][network[2]])
-            self.elitist_preserve_rate_label.setText(['0%', '10%', '20%', '30%', '40%'][network[3]])
-            self.static_mutation_rate_label.setText(['5%', '10%', '15%', '20%', '25%'][network[4]])
-
-            try:
-                self.main.mario_ai.ga.load_ai()
-                self.main.mario_ai.frame_timer.end_frame_signal.emit()
-            except:
-                pass
+            self.main.close_mario_ai()
+            self.main.run_mario_ai(self.ai_list[self.current_ai])
 
 
 class MarioAICreateTool(QWidget):
@@ -761,16 +751,12 @@ class MarioAICreateTool(QWidget):
 
         form_layout = QFormLayout()
 
+        self.ai_name_line_edit = QLineEdit()
+
         self.layer_combo_box = QComboBox()
         self.layer_combo_box.addItem('2')
         self.layer_combo_box.addItem('3')
         self.layer_combo_box.addItem('4')
-        self.layer_combo_box.addItem('5')
-
-        self.layer_size_combo_box = QComboBox()
-        self.layer_size_combo_box.addItem('수렴형')
-        self.layer_size_combo_box.addItem('발산형')
-        self.layer_size_combo_box.addItem('방추형')
 
         self.generation_size_combo_box = QComboBox()
         self.generation_size_combo_box.addItem('10')
@@ -797,8 +783,8 @@ class MarioAICreateTool(QWidget):
         create_ai_button = QPushButton("생성")
         create_ai_button.clicked.connect(self.create_ai)
 
+        form_layout.addRow("이름: ", self.ai_name_line_edit)
         form_layout.addRow("신경망 크기: ", self.layer_combo_box)
-        form_layout.addRow("신경망 형태: ", self.layer_size_combo_box)
         form_layout.addRow("세대 크기: ", self.generation_size_combo_box)
         form_layout.addRow("엘리트 보존: ", self.elitist_preserve_rate_combo_box)
         form_layout.addRow("변이: ", self.static_mutation_rate_combo_box)
@@ -810,17 +796,23 @@ class MarioAICreateTool(QWidget):
         folder_name = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S-%fZ")
         os.mkdir(os.path.join(DATA_PATH, folder_name))
 
+        name = self.ai_name_line_edit.text()
         layer = self.layer_combo_box.currentIndex()
-        layer_size = self.layer_size_combo_box.currentIndex()
         generation_size = self.generation_size_combo_box.currentIndex()
         elitist_preserve_rate = self.elitist_preserve_rate_combo_box.currentIndex()
         static_mutation_rate = self.static_mutation_rate_combo_box.currentIndex()
 
-        np.save(os.path.join(DATA_PATH, folder_name, 'network.npy'), np.array([layer, layer_size, generation_size, elitist_preserve_rate, static_mutation_rate]))
+        network = [layer, generation_size, elitist_preserve_rate, static_mutation_rate]
+
+        if len(name) == 0:
+            name = f'{[2, 3, 4][network[0]]}-{[10, 20, 30, 40, 50][network[1]]}-{[0, 10, 20, 30, 40][network[2]]}%-{[5, 10, 15, 20, 25][network[3]]}%'
+
+        np.save(os.path.join(DATA_PATH, folder_name, 'network.npy'), np.array([layer, generation_size, elitist_preserve_rate, static_mutation_rate]))
+        np.save(os.path.join(DATA_PATH, folder_name, 'name.npy'), np.array([name]))
 
         try:
             self.main.mario_ai_tool_box.mario_ai_list_tool.ai_list.insert(0, folder_name)
-            self.main.mario_ai_tool_box.mario_ai_list_tool.ai_list_widget.insertItem(0, folder_name)
+            self.main.mario_ai_tool_box.mario_ai_list_tool.ai_list_widget.insertItem(0, name)
             self.main.mario_ai_tool_box.tabs.setCurrentIndex(0)
         except:
             pass
@@ -842,12 +834,353 @@ class MarioAIToolBox(QWidget):
         self.tabs.addTab(self.mario_ai_list_tool, 'AI 목록')
         self.tabs.addTab(self.mario_ai_create_tool, 'AI 생성')
 
+        if len(self.mario_ai_list_tool.ai_list) == 0:
+            self.tabs.setCurrentIndex(1)
+
         vbox = QVBoxLayout()
         vbox.addWidget(self.tabs)
 
         self.setLayout(vbox)
 
         self.show()
+
+    def closeEvent(self, event):
+        self.main.close_mario_ai_tool_box()
+
+    def keyPressEvent(self, event):
+        if event.isAutoRepeat():
+            return
+
+        key = event.key()
+        if key == Qt.Key.Key_Escape:
+            self.main.close_mario_ai_tool_box()
+
+
+class MarioAITileMap(QWidget):
+    def __init__(self, main):
+        super().__init__()
+        self.setWindowTitle('Tile Map')
+        self.main = main
+
+        self.setFixedSize(16 * 20, 13 * 20)
+        self.move(860, 100)
+
+        self.show()
+
+    def paintEvent(self, e):
+        painter = QPainter()
+        painter.begin(self)
+
+        try:
+            ram = self.main.mario_ai.env.get_ram()
+
+            full_screen_tiles = ram[0x0500:0x069F + 1]
+            full_screen_tile_count = full_screen_tiles.shape[0]
+
+            full_screen_page1_tiles = full_screen_tiles[:full_screen_tile_count // 2].reshape((-1, 16))
+            full_screen_page2_tiles = full_screen_tiles[full_screen_tile_count // 2:].reshape((-1, 16))
+
+            full_screen_tiles = np.concatenate((full_screen_page1_tiles, full_screen_page2_tiles), axis=1).astype(np.int)
+
+            enemy_drawn = ram[0x000F:0x0014]
+            enemy_horizontal_position_in_level = ram[0x006E:0x0072 + 1]
+            enemy_x_position_on_screen = ram[0x0087:0x008B + 1]
+            enemy_y_position_on_screen = ram[0x00CF:0x00D3 + 1]
+
+            for i in range(5):
+                if enemy_drawn[i] == 1:
+                    ex = (((enemy_horizontal_position_in_level[i] * 256) + enemy_x_position_on_screen[i]) % 512 + 8) // 16
+                    ey = (enemy_y_position_on_screen[i] - 8) // 16 - 1
+                    if 0 <= ex < full_screen_tiles.shape[1] and 0 <= ey < full_screen_tiles.shape[0]:
+                        full_screen_tiles[ey][ex] = -1
+
+            current_screen_in_level = ram[0x071A]
+            screen_x_position_in_level = ram[0x071C]
+            screen_x_position_offset = (256 * current_screen_in_level + screen_x_position_in_level) % 512
+            sx = screen_x_position_offset // 16
+
+            screen_tiles = np.concatenate((full_screen_tiles, full_screen_tiles), axis=1)[:, sx:sx + 16]
+
+            painter.setPen(QPen(Qt.GlobalColor.black, 2, Qt.PenStyle.SolidLine))
+            for i in range(screen_tiles.shape[0]):
+                for j in range(screen_tiles.shape[1]):
+                    if screen_tiles[i][j] > 0:
+                        screen_tiles[i][j] = 1
+                    if screen_tiles[i][j] == -1:
+                        screen_tiles[i][j] = 2
+                        painter.setBrush(QBrush(Qt.GlobalColor.red))
+                    else:
+                        painter.setBrush(QBrush(QColor.fromHslF(125 / 239, 0 if screen_tiles[i][j] == 0 else 1, 120 / 240)))
+                    painter.drawRect(20 * j, 20 * i, 20, 20)
+
+            player_x_position_current_screen_offset = ram[0x03AD]
+            player_y_position_current_screen_offset = ram[0x03B8]
+            px = (player_x_position_current_screen_offset + 8) // 16
+            py = (player_y_position_current_screen_offset + 8) // 16 - 1
+            painter.setBrush(QBrush(Qt.GlobalColor.blue))
+            painter.drawRect(20 * px, 20 * py, 20, 20)
+        except:
+            pass
+
+        painter.end()
+
+    def closeEvent(self, event):
+        self.main.close_mario_ai()
+
+    def keyPressEvent(self, event):
+        if event.isAutoRepeat():
+            return
+
+        key = event.key()
+        if key == Qt.Key.Key_Escape:
+            self.main.close_mario_ai()
+
+
+class MarioAIInfo(QWidget):
+    def __init__(self, main):
+        super().__init__()
+        self.main = main
+        self.setWindowTitle('Info')
+
+        self.setFixedSize(320, 180)
+        self.move(860, 400)
+
+        self.fitness_list_widget = QListWidget()
+        self.fitness_list_widget.setFixedWidth(140)
+
+        self.form_layout = QFormLayout()
+
+        self.generation_label = QLabel()
+        self.current_chromosome_index_label = QLabel()
+        self.elite_fitness_label = QLabel()
+        self.fitness_label = QLabel()
+
+        self.form_layout.addRow("현재 세대: ", self.generation_label)
+        self.form_layout.addRow("현재 마리오: ", self.current_chromosome_index_label)
+        self.form_layout.addRow("엘리트 적합도: ", self.elite_fitness_label)
+        self.form_layout.addRow("현재 적합도: ", self.fitness_label)
+
+        ai_list_layout = QHBoxLayout()
+        ai_list_layout.addWidget(self.fitness_list_widget)
+        ai_list_layout.addLayout(self.form_layout)
+
+        self.setLayout(ai_list_layout)
+
+        self.show()
+
+    def closeEvent(self, event):
+        self.main.close_mario_ai()
+
+    def keyPressEvent(self, event):
+        if event.isAutoRepeat():
+            return
+
+        key = event.key()
+        if key == Qt.Key.Key_Escape:
+            self.main.close_mario_ai()
+
+
+class MarioAINetwork(QWidget):
+    def __init__(self, main):
+        super().__init__()
+        self.setWindowTitle('Neural Network')
+        self.main = main
+
+        self.setFixedSize(480, 480)
+        self.move(1190, 100)
+
+        self.show()
+
+    def paintEvent(self, e):
+        painter = QPainter()
+        painter.begin(self)
+
+        try:
+            if self.main.mario_ai.ga.layer == 2:
+                painter.setPen(QPen(Qt.GlobalColor.black, 2, Qt.PenStyle.SolidLine))
+
+                for i in range(5):
+                    painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[0][0][i] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                    painter.drawLine(240 - 40 * (5 - i), 0, 240 - 40 * (5 - i), 240 - 100)
+                    painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[0][0][6 + i] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                    painter.drawLine(240 + 40 * (5 - i), 0, 240 + 40 * (5 - i), 240 - 100)
+                painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[0][0][5] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                painter.drawLine(240, 0, 240, 240 - 100)
+
+                for i in range(5):
+                    for j in range(3):
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[1][i][j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 - 40 * (5 - i), 240 - 100, 240 - 30 - 60 * (2 - j), 240 + 100)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[1][6 + i][j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 + 40 * (5 - i), 240 - 100, 240 - 30 - 60 * (2 - j), 240 + 100)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[1][i][3 + j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 - 40 * (5 - i), 240 - 100, 240 - 30 + 60 * (2 - j), 240 + 100)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[1][6 + i][3 + j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 + 40 * (5 - i), 240 - 100, 240 + 30 + 60 * (2 - j), 240 + 100)
+
+                for j in range(3):
+                    painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[1][5][j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                    painter.drawLine(240, 240 - 100, 240 - 30 - 60 * (2 - j), 240 + 100)
+                    painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[1][5][3 + j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                    painter.drawLine(240, 240 - 100, 240 + 30 + 60 * (2 - j), 240 + 100)
+
+                for i in range(5):
+                    painter.setBrush(QBrush(QColor.fromHslF(125 / 239, 0 if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].l[0][i] > 0 else 1, 120 / 240)))
+                    painter.drawEllipse(240 - 16 - 40 * (5 - i), 240 - 16 - 100, 16 * 2, 16 * 2)
+                    painter.setBrush(QBrush(QColor.fromHslF(125 / 239, 0 if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].l[0][6 + i] > 0 else 1, 120 / 240)))
+                    painter.drawEllipse(240 - 16 + 40 * (5 - i), 240 - 16 - 100, 16 * 2, 16 * 2)
+                painter.setBrush(QBrush(QColor.fromHslF(125 / 239, 0 if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].l[0][5] > 0 else 1, 120 / 240)))
+                painter.drawEllipse(240 - 16, 240 - 16 - 100, 16 * 2, 16 * 2)
+
+                for i in range(3):
+                    painter.setPen(QPen(Qt.GlobalColor.black, 2, Qt.PenStyle.SolidLine))
+                    painter.setBrush(QBrush(QColor.fromHslF(0.8, 0 if self.main.mario_ai.predict[i] == 0 else 1, 0.8)))
+                    painter.drawEllipse(240 - 16 - 30 - 60 * (2 - i), 240 - 16 + 100, 16 * 2, 16 * 2)
+                    painter.setBrush(QBrush(QColor.fromHslF(0.8, 0 if self.main.mario_ai.predict[6 - 1 - i] == 0 else 1, 0.8)))
+                    painter.drawEllipse(240 - 16 + 30 + 60 * (2 - i), 240 - 16 + 100, 16 * 2, 16 * 2)
+
+                    painter.drawText(240 - 16 - 30 - 60 * (2 - i) + 12, 240 - 16 + 100 + 19, ('U', 'D', 'L', 'R', 'A', 'B')[i])
+                    painter.drawText(240 - 16 + 30 + 60 * (2 - i) + 12, 240 - 16 + 100 + 19, ('U', 'D', 'L', 'R', 'A', 'B')[6 - 1 - i])
+            elif self.main.mario_ai.ga.layer == 3:
+                for i in range(3):
+                    painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[0][0][i] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                    painter.drawLine(240 - 40 * (5 - i), 0, 240 - 40 * (5 - i), 240 - 140)
+                    painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[0][0][16 - 1 - i] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                    painter.drawLine(240 + 40 * (5 - i), 0, 240 + 40 * (5 - i), 240 - 140)
+
+                for i in range(3):
+                    for j in range(4):
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[1][i][j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 - 40 * (5 - i), 240 - 140, 240 - 22 - 44 * (3 - j), 240)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[1][16 - 1 - i][j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 + 40 * (5 - i), 240 - 140, 240 - 22 - 44 * (3 - j), 240)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[1][i][4 + j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 - 40 * (5 - i), 240 - 140, 240 + 22 + 44 * (3 - j), 240)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[1][16 - 1 - i][4 + j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 + 40 * (5 - i), 240 - 140, 240 + 22 + 44 * (3 - j), 240)
+
+                for i in range(4):
+                    for j in range(3):
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[2][i][j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 - 22 - 44 * (3 - i), 240, 240 - 25 - 50 * (2 - j), 240 + 140)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[2][4 + i][j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 + 22 + 44 * (3 - i), 240, 240 - 25 - 50 * (2 - j), 240 + 140)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[2][i][3 + j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 - 22 - 44 * (3 - i), 240, 240 + 25 + 50 * (2 - j), 240 + 140)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[2][4 + i][3 + j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 + 22 + 44 * (3 - i), 240, 240 + 25 + 50 * (2 - j), 240 + 140)
+
+                painter.setPen(QPen(Qt.GlobalColor.black, 2, Qt.PenStyle.SolidLine))
+
+                for i in range(3):
+                    painter.setBrush(QBrush(QColor.fromHslF(125 / 239, 0 if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].l[0][i] > 0 else 1, 120 / 240)))
+                    painter.drawEllipse(240 - 16 - 40 * (5 - i), 240 - 16 - 140, 16 * 2, 16 * 2)
+                    painter.setBrush(QBrush(QColor.fromHslF(125 / 239, 0 if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].l[0][16 - 1 - i] > 0 else 1, 120 / 240)))
+                    painter.drawEllipse(240 - 16 + 40 * (5 - i), 240 - 16 - 140, 16 * 2, 16 * 2)
+
+                painter.setBrush(QBrush(Qt.GlobalColor.black))
+                painter.drawEllipse(240 - 4, 240 - 4 - 140, 4 * 2, 4 * 2)
+                painter.drawEllipse(240 - 4 - 20, 240 - 4 - 140, 4 * 2, 4 * 2)
+                painter.drawEllipse(240 - 4 + 20, 240 - 4 - 140, 4 * 2, 4 * 2)
+
+                for i in range(4):
+                    painter.setBrush(QBrush(QColor.fromHslF(125 / 239, 0 if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].l[1][i] > 0 else 1, 120 / 240)))
+                    painter.drawEllipse(240 - 16 - 22 - 44 * (3 - i), 240 - 16, 16 * 2, 16 * 2)
+                    painter.setBrush(QBrush(QColor.fromHslF(125 / 239, 0 if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].l[1][4 + i] > 0 else 1, 120 / 240)))
+                    painter.drawEllipse(240 - 16 + 22 + 44 * (3 - i), 240 - 16, 16 * 2, 16 * 2)
+
+                for i in range(3):
+                    painter.setPen(QPen(Qt.GlobalColor.black, 2, Qt.PenStyle.SolidLine))
+                    painter.setBrush(QBrush(QColor.fromHslF(0.8, 0 if self.main.mario_ai.predict[i] == 0 else 1, 0.8)))
+                    painter.drawEllipse(240 - 16 - 25 - 50 * (2 - i), 240 - 16 + 140, 16 * 2, 16 * 2)
+                    painter.setBrush(QBrush(QColor.fromHslF(0.8, 0 if self.main.mario_ai.predict[6 - 1 - i] == 0 else 1, 0.8)))
+                    painter.drawEllipse(240 - 16 + 25 + 50 * (2 - i), 240 - 16 + 140, 16 * 2, 16 * 2)
+
+                    painter.drawText(240 - 16 - 25 - 50 * (2 - i) + 12, 240 - 16 + 140 + 19, ('U', 'D', 'L', 'R', 'A', 'B')[i])
+                    painter.drawText(240 - 16 + 25 + 50 * (2 - i) + 12, 240 - 16 + 140 + 19, ('U', 'D', 'L', 'R', 'A', 'B')[6 - 1 - i])
+            elif self.main.mario_ai.ga.layer == 4:
+                for i in range(3):
+                    painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[0][0][i] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                    painter.drawLine(240 - 40 * (5 - i), 0, 240 - 40 * (5 - i), 240 - 180)
+                    painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[0][0][32 - 1 - i] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                    painter.drawLine(240 + 40 * (5 - i), 0, 240 + 40 * (5 - i), 240 - 180)
+
+                for i in range(3):
+                    for j in range(3):
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[1][i][j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 - 40 * (5 - i), 240 - 180, 240 - 44 * (4 - j), 240 - 60)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[1][32 - 1 - i][j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 + 40 * (5 - i), 240 - 180, 240 - 44 * (4 - j), 240 - 60)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[1][i][16 - 1 - j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 - 40 * (5 - i), 240 - 180, 240 + 44 * (4 - j), 240 - 60)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[1][32 - 1 - i][16 - 1 - j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 + 40 * (5 - i), 240 - 180, 240 + 44 * (4 - j), 240 - 60)
+
+                for i in range(3):
+                    for j in range(4):
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[2][i][j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 - 44 * (4 - i), 240 - 60, 240 - 22 - 44 * (3 - j), 240 + 60)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[2][16 - 1 - i][j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 + 44 * (4 - i), 240 - 60, 240 - 22 - 44 * (3 - j), 240 + 60)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[2][i][4 + j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 - 44 * (4 - i), 240 - 60, 240 + 22 + 44 * (3 - j), 240 + 60)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[2][16 - 1 - i][4 + j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 + 44 * (4 - i), 240 - 60, 240 + 22 + 44 * (3 - j), 240 + 60)
+
+                for i in range(4):
+                    for j in range(3):
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[3][i][j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 - 22 - 44 * (3 - i), 240 + 60, 240 - 25 - 50 * (2 - j), 240 + 180)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[3][4 + i][j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 + 22 + 44 * (3 - i), 240 + 60, 240 - 25 - 50 * (2 - j), 240 + 180)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[3][i][3 + j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 - 22 - 44 * (3 - i), 240 + 60, 240 + 25 + 50 * (2 - j), 240 + 180)
+                        painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[3][4 + i][3 + j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+                        painter.drawLine(240 + 22 + 44 * (3 - i), 240 + 60, 240 + 25 + 50 * (2 - j), 240 + 180)
+
+                painter.setPen(QPen(Qt.GlobalColor.black, 2, Qt.PenStyle.SolidLine))
+
+                for i in range(3):
+                    painter.setBrush(QBrush(QColor.fromHslF(125 / 239, 0 if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].l[0][i] > 0 else 1, 120 / 240)))
+                    painter.drawEllipse(240 - 16 - 40 * (5 - i), 240 - 16 - 180, 16 * 2, 16 * 2)
+                    painter.setBrush(QBrush(QColor.fromHslF(125 / 239, 0 if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].l[0][32 - 1 - i] > 0 else 1, 120 / 240)))
+                    painter.drawEllipse(240 - 16 + 40 * (5 - i), 240 - 16 - 180, 16 * 2, 16 * 2)
+
+                painter.setBrush(QBrush(Qt.GlobalColor.black))
+                painter.drawEllipse(240 - 4, 240 - 4 - 180, 4 * 2, 4 * 2)
+                painter.drawEllipse(240 - 4 - 30, 240 - 4 - 180, 4 * 2, 4 * 2)
+                painter.drawEllipse(240 - 4 + 30, 240 - 4 - 180, 4 * 2, 4 * 2)
+
+                for i in range(3):
+                    painter.setBrush(QBrush(QColor.fromHslF(125 / 239, 0 if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].l[1][i] > 0 else 1, 120 / 240)))
+                    painter.drawEllipse(240 - 16 - 44 * (4 - i), 240 - 16 - 60, 16 * 2, 16 * 2)
+                    painter.setBrush(QBrush(QColor.fromHslF(125 / 239, 0 if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].l[1][16 - 1 - i] > 0 else 1, 120 / 240)))
+                    painter.drawEllipse(240 - 16 + 44 * (4 - i), 240 - 16 - 60, 16 * 2, 16 * 2)
+
+                painter.setBrush(QBrush(Qt.GlobalColor.black))
+                painter.drawEllipse(240 - 4, 240 - 4 - 60, 4 * 2, 4 * 2)
+                painter.drawEllipse(240 - 4 - 20, 240 - 4 - 60, 4 * 2, 4 * 2)
+                painter.drawEllipse(240 - 4 + 20, 240 - 4 - 60, 4 * 2, 4 * 2)
+
+                for i in range(4):
+                    painter.setBrush(QBrush(QColor.fromHslF(125 / 239, 0 if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].l[2][i] > 0 else 1, 120 / 240)))
+                    painter.drawEllipse(240 - 16 - 22 - 44 * (3 - i), 240 - 16 + 60, 16 * 2, 16 * 2)
+                    painter.setBrush(QBrush(QColor.fromHslF(125 / 239, 0 if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].l[2][4 + i] > 0 else 1, 120 / 240)))
+                    painter.drawEllipse(240 - 16 + 22 + 44 * (3 - i), 240 - 16 + 60, 16 * 2, 16 * 2)
+
+                for i in range(3):
+                    painter.setPen(QPen(Qt.GlobalColor.black, 2, Qt.PenStyle.SolidLine))
+                    painter.setBrush(QBrush(QColor.fromHslF(0.8, 0 if self.main.mario_ai.predict[i] == 0 else 1, 0.8)))
+                    painter.drawEllipse(240 - 16 - 25 - 50 * (2 - i), 240 - 16 + 180, 16 * 2, 16 * 2)
+                    painter.setBrush(QBrush(QColor.fromHslF(0.8, 0 if self.main.mario_ai.predict[6 - 1 - i] == 0 else 1, 0.8)))
+                    painter.drawEllipse(240 - 16 + 25 + 50 * (2 - i), 240 - 16 + 180, 16 * 2, 16 * 2)
+
+                    painter.drawText(240 - 16 - 25 - 50 * (2 - i) + 12, 240 - 16 + 180 + 19, ('U', 'D', 'L', 'R', 'A', 'B')[i])
+                    painter.drawText(240 - 16 + 25 + 50 * (2 - i) + 12, 240 - 16 + 180 + 19, ('U', 'D', 'L', 'R', 'A', 'B')[6 - 1 - i])
+        except:
+            pass
+
+        painter.end()
 
     def closeEvent(self, event):
         self.main.close_mario_ai()
@@ -867,17 +1200,23 @@ class MarioGYM(QWidget):
         self.setWindowTitle('Mario GYM')
 
         self.mario = None
-        self.mario_analyzer_tile_map = None
-        self.mario_analyzer_key_viewer = None
+        self.mario_tile_map = None
+        self.mario_key_viewer = None
+
+        self.mario_ai_tool_box = None
 
         self.mario_ai = None
+        self.mario_ai_tile_map = None
+        self.mario_ai_info = None
+        self.mario_ai_network = None
+        self.mario_ai_graph = None
 
         self.setFixedSize(360, 240)
 
         mario_button = QPushButton('Super Mario Bros.')
         mario_button.clicked.connect(self.run_mario)
         mario_ai_button = QPushButton('Mario GYM')
-        mario_ai_button.clicked.connect(self.run_mario_ai)
+        mario_ai_button.clicked.connect(self.run_mario_ai_tool_box)
         mario_replay_button = QPushButton('Replay')
         mario_replay_button.clicked.connect(self.run_mario_replay)
 
@@ -925,20 +1264,37 @@ class MarioGYM(QWidget):
         self.mario_key_viewer.close()
         self.show()
 
-    def run_mario_ai(self):
-        self.mario_ai = MarioAI(self, self.game_level_combo_box.currentIndex(), self.game_speed_combo_box.currentIndex())
-        self.mario_ai.show()
-
+    def run_mario_ai_tool_box(self):
         self.mario_ai_tool_box = MarioAIToolBox(self)
         self.mario_ai_tool_box.show()
 
         self.hide()
 
-    def close_mario_ai(self):
-        self.mario_ai.frame_timer.stop_game()
-        self.mario_ai.close()
+    def close_mario_ai_tool_box(self):
+        self.close_mario_ai()
         self.mario_ai_tool_box.close()
+        self.mario_ai_info.close()
         self.show()
+
+    def run_mario_ai(self, select_folder_name):
+        self.mario_ai_tile_map = MarioAITileMap(self)
+        self.mario_ai_tile_map.show()
+        self.mario_ai_info = MarioAIInfo(self)
+        self.mario_ai_info.show()
+        self.mario_ai_network = MarioAINetwork(self)
+        self.mario_ai_network.show()
+        self.mario_ai = MarioAI(self, self.game_level_combo_box.currentIndex(), self.game_speed_combo_box.currentIndex(), select_folder_name)
+        self.mario_ai.show()
+
+    def close_mario_ai(self):
+        if self.mario_ai is not None:
+            self.mario_ai.frame_timer.stop_game()
+            self.mario_ai.close()
+            self.mario_ai_tile_map.close()
+            self.mario_ai_info.close()
+            self.mario_ai_network.close()
+            plt.close()
+            self.mario_ai = None
 
     def run_mario_replay(self):
         pass
