@@ -510,6 +510,15 @@ class GeneticAlgorithm:
             c.win = 0
         self.current_chromosome_index = 0
 
+    def replay_mario(self, index):
+        for c in self.chromosomes:
+            c.distance = 0
+            c.max_distance = 0
+            c.frames = 0
+            c.stop_frames = 0
+            c.win = 0
+        self.current_chromosome_index = index
+
 
 class MarioAI(QWidget):
     def __init__(self, main, game_level, game_speed, select_folder_name, replay_generation=-1):
@@ -646,6 +655,7 @@ class MarioAI(QWidget):
             try:
                 if self.main.mario_ai_info.fitness_list_widget.count() <= self.ga.current_chromosome_index:
                     self.main.mario_ai_info.fitness_list_widget.addItem(f'{self.ga.current_chromosome_index + 1}번: {self.current_fitness}')
+                    self.main.mario_ai_info.fitness_list_widget.scrollToBottom()
                     self.main.mario_ai_info.elite_fitness_label.setText(f'{self.elite_fitness}')
             except:
                 pass
@@ -679,7 +689,7 @@ class MarioAI(QWidget):
         try:
             self.main.mario_ai_tile_map.update()
             self.main.mario_ai_info.generation_label.setText(f'{self.ga.generation} 세대')
-            self.main.mario_ai_info.current_chromosome_index_label.setText(f'{self.ga.current_chromosome_index} / {self.ga.generation_size}')
+            self.main.mario_ai_info.current_chromosome_index_label.setText(f'{self.ga.current_chromosome_index + 1} / {self.ga.generation_size}')
             self.current_fitness = current_chromosome.fitness()
             self.main.mario_ai_info.elite_fitness_label.setText(f'{self.current_fitness if self.elite_fitness < self.current_fitness else self.elite_fitness}')
             self.main.mario_ai_info.fitness_label.setText(f'{self.current_fitness}')
@@ -970,6 +980,7 @@ class MarioAIInfo(QWidget):
 
         self.fitness_list_widget = QListWidget()
         self.fitness_list_widget.setFixedWidth(140)
+        self.fitness_list_widget.clicked.connect(self.change_current_mario)
 
         self.form_layout = QFormLayout()
 
@@ -990,6 +1001,16 @@ class MarioAIInfo(QWidget):
         self.setLayout(ai_list_layout)
 
         self.show()
+
+    def change_current_mario(self):
+        current_mario = self.fitness_list_widget.currentRow()
+
+        try:
+            if self.main.mario_ai.replay_generation != -1:
+                self.main.mario_ai.ga.replay_mario(current_mario)
+                self.main.mario_ai.env.reset()
+        except:
+            pass
 
     def closeEvent(self, event):
         self.main.close_mario_ai()
@@ -1255,7 +1276,6 @@ class MarioAIGraph(QWidget):
             painter.setPen(QPen(Qt.GlobalColor.red, 2, Qt.PenStyle.SolidLine))
             painter.setBrush(QBrush(Qt.GlobalColor.red))
 
-            print(self.main.mario_ai.replay_generation, x_len)
             for i in range(0, x_len):
                 x = x_gap * i + 10
                 y = int(280 * self.main.mario_ai.ga.fitness[i] / y_max)
@@ -1427,11 +1447,15 @@ class MarioGYM(QWidget):
         self.game_speed_combo_box.addItem('빠른 속도')
         self.game_speed_combo_box.addItem('최고 속도')
 
+        open_ai_folder_button = QPushButton('AI 폴더 열기')
+        open_ai_folder_button.clicked.connect(self.open_ai_folder)
+
         vbox_layout = QVBoxLayout()
         vbox_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vbox_layout.addWidget(mario_button)
         vbox_layout.addWidget(mario_ai_button)
         vbox_layout.addWidget(mario_replay_button)
+        vbox_layout.addWidget(open_ai_folder_button)
         vbox_layout.addWidget(self.game_level_combo_box)
         vbox_layout.addWidget(self.game_speed_combo_box)
 
@@ -1522,6 +1546,12 @@ class MarioGYM(QWidget):
             self.mario_ai_graph.close()
             self.mario_ai = None
 
+    def open_ai_folder(self):
+        if os.name == 'nt':
+            os.startfile(DATA_PATH)
+        elif sys.platform.startswith("darwin"):
+            os.system(f'open {DATA_PATH}')
+
     def keyPressEvent(self, event):
         if event.isAutoRepeat():
             return
@@ -1531,14 +1561,14 @@ class MarioGYM(QWidget):
             self.close()
 
 
-def exception_hook(except_type, value, traceback):
-    print(except_type, value, traceback)
-    print(traceback.format_exc())
-    exit(1)
+# def exception_hook(except_type, value, traceback):
+#     print(except_type, value, traceback)
+#     print(traceback.format_exc())
+#     exit(1)
 
 
 def run():
-    sys.excepthook = exception_hook
+    # sys.excepthook = exception_hook
     app = QApplication(sys.argv)
     w = MarioGYM()
     w.show()
