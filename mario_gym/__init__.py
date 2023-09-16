@@ -354,7 +354,7 @@ class Chromosome:
 
 
 class GeneticAlgorithm:
-    def __init__(self, main, select_folder_name):
+    def __init__(self, main, select_folder_name, replay_generation):
         self.main = main
         self.select_folder_name = select_folder_name
 
@@ -382,14 +382,20 @@ class GeneticAlgorithm:
         self.static_mutation_rate = [0.05, 0.1, 0.15, 0.2, 0.25][self.network[3]]
 
         self.generation = 0
-        generation_file_path = os.path.join(folder, 'generation.npy')
-        if os.path.exists(generation_file_path):
-            self.generation = np.load(generation_file_path)[0]
+        if replay_generation == -1:
+            generation_file_path = os.path.join(folder, 'generation.npy')
+            if os.path.exists(generation_file_path):
+                self.generation = np.load(generation_file_path)[0]
+        else:
+            self.generation = replay_generation
 
         self.fitness = []
         fitness_file_path = os.path.join(folder, 'fitness.npy')
         if os.path.exists(fitness_file_path):
-            self.fitness = np.load(fitness_file_path)[:-1]
+            if replay_generation == -1:
+                self.fitness = np.load(fitness_file_path)[:-1]
+            else:
+                self.fitness = np.load(fitness_file_path)
 
         self.chromosomes = []
 
@@ -495,16 +501,26 @@ class GeneticAlgorithm:
         self.generation += 1
         self.current_chromosome_index = 0
 
+    def replay_generation(self):
+        for c in self.chromosomes:
+            c.distance = 0
+            c.max_distance = 0
+            c.frames = 0
+            c.stop_frames = 0
+            c.win = 0
+        self.current_chromosome_index = 0
+
 
 class MarioAI(QWidget):
-    def __init__(self, main, game_level, game_speed, select_folder_name):
+    def __init__(self, main, game_level, game_speed, select_folder_name, replay_generation=-1):
         super().__init__()
         name = np.load(os.path.join(DATA_PATH, select_folder_name, 'name.npy'))[0]
         self.setWindowTitle(name)
         self.main = main
         self.game_speed = game_speed
+        self.replay_generation = replay_generation
 
-        self.ga = GeneticAlgorithm(main, select_folder_name)
+        self.ga = GeneticAlgorithm(main, select_folder_name, replay_generation)
 
         self.elite_fitness = 0
         if len(self.ga.fitness):
@@ -628,23 +644,29 @@ class MarioAI(QWidget):
                 self.elite_fitness = self.current_fitness
 
             try:
-                self.main.mario_ai_info.fitness_list_widget.addItem(f'{self.ga.current_chromosome_index + 1}번: {self.current_fitness}')
-                self.main.mario_ai_info.elite_fitness_label.setText(f'{self.elite_fitness}')
+                if self.main.mario_ai_info.fitness_list_widget.count() <= self.ga.current_chromosome_index:
+                    self.main.mario_ai_info.fitness_list_widget.addItem(f'{self.ga.current_chromosome_index + 1}번: {self.current_fitness}')
+                    self.main.mario_ai_info.elite_fitness_label.setText(f'{self.elite_fitness}')
             except:
                 pass
 
             self.ga.current_chromosome_index += 1
 
             if self.ga.current_chromosome_index == self.ga.generation_size:
-                try:
-                    self.main.mario_ai_info.fitness_list_widget.clear()
-                except:
-                    pass
-                self.ga.next_generation()
-                try:
-                    self.main.mario_ai_graph.update()
-                except:
-                    pass
+                if self.replay_generation == -1:
+                    try:
+                        self.main.mario_ai_info.fitness_list_widget.clear()
+                    except:
+                        pass
+
+                    self.ga.next_generation()
+
+                    try:
+                        self.main.mario_ai_graph.update()
+                    except:
+                        pass
+                else:
+                    self.ga.replay_generation()
 
             self.env.reset()
         else:
@@ -824,7 +846,7 @@ class MarioAICreateTool(QWidget):
 class MarioAIToolBox(QWidget):
     def __init__(self, main):
         super().__init__()
-        self.setWindowTitle('Tool Box')
+        self.setWindowTitle('AI Tool Box')
         self.main = main
 
         self.setFixedSize(290, 480)
@@ -844,8 +866,6 @@ class MarioAIToolBox(QWidget):
         vbox.addWidget(self.tabs)
 
         self.setLayout(vbox)
-
-        self.show()
 
     def closeEvent(self, event):
         self.main.close_mario_ai_tool_box()
@@ -992,16 +1012,12 @@ class MarioAINetwork(QWidget):
         self.setFixedSize(480, 480)
         self.move(1190, 100)
 
-        self.show()
-
     def paintEvent(self, e):
         painter = QPainter()
         painter.begin(self)
 
         try:
             if self.main.mario_ai.ga.layer == 2:
-                painter.setPen(QPen(Qt.GlobalColor.black, 2, Qt.PenStyle.SolidLine))
-
                 for i in range(5):
                     painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[0][0][i] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
                     painter.drawLine(240 - 40 * (5 - i), 0, 240 - 40 * (5 - i), 240 - 100)
@@ -1026,6 +1042,8 @@ class MarioAINetwork(QWidget):
                     painter.drawLine(240, 240 - 100, 240 - 30 - 60 * (2 - j), 240 + 100)
                     painter.setPen(QPen(Qt.GlobalColor.red if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].w[1][5][3 + j] > 0 else Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
                     painter.drawLine(240, 240 - 100, 240 + 30 + 60 * (2 - j), 240 + 100)
+
+                painter.setPen(QPen(Qt.GlobalColor.black, 2, Qt.PenStyle.SolidLine))
 
                 for i in range(5):
                     painter.setBrush(QBrush(QColor.fromHslF(125 / 239, 0 if self.main.mario_ai.ga.chromosomes[self.main.mario_ai.ga.current_chromosome_index].l[0][i] > 0 else 1, 120 / 240)))
@@ -1206,42 +1224,51 @@ class MarioAIGraph(QWidget):
         self.setFixedSize(1570, 300)
         self.move(100, 620)
 
-        self.show()
-
     def paintEvent(self, e):
         painter = QPainter()
         painter.begin(self)
 
-        x_len = len(self.main.mario_ai.ga.fitness)
-        x_gap = 0
-        y_max = 0
-        if x_len >= 2:
-            x_gap = 1550 // (x_len - 1)
+        try:
+            x_len = len(self.main.mario_ai.ga.fitness)
+            x_gap = 0
+            y_max = 0
+            if x_len >= 2:
+                x_gap = 1550 // (x_len - 1)
 
-        if x_len >= 1:
-            y_max = np.max(self.main.mario_ai.ga.fitness)
+            if x_len >= 1:
+                y_max = np.max(self.main.mario_ai.ga.fitness)
 
-        px = -1
-        py = -1
+            px = -1
+            py = -1
 
-        painter.setPen(QPen(Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
-        for i in range(0, x_len):
-            x = x_gap * i + 10
-            y = int(280 * self.main.mario_ai.ga.fitness[i] / y_max)
+            painter.setPen(QPen(Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
+            for i in range(0, x_len):
+                x = x_gap * i + 10
+                y = int(280 * self.main.mario_ai.ga.fitness[i] / y_max)
 
-            if px != -1:
-                painter.drawLine(px, 290 - py, x, 290 - y)
+                if px != -1:
+                    painter.drawLine(px, 290 - py, x, 290 - y)
 
-            px = x
-            py = y
+                px = x
+                py = y
 
-        painter.setPen(QPen(Qt.GlobalColor.red, 2, Qt.PenStyle.SolidLine))
-        painter.setBrush(QBrush(Qt.GlobalColor.red))
-        for i in range(0, x_len):
-            x = x_gap * i + 10
-            y = int(280 * self.main.mario_ai.ga.fitness[i] / y_max)
+            painter.setPen(QPen(Qt.GlobalColor.red, 2, Qt.PenStyle.SolidLine))
+            painter.setBrush(QBrush(Qt.GlobalColor.red))
 
-            painter.drawEllipse(x - 2, 290 - y - 2, 2 * 2, 2 * 2)
+            print(self.main.mario_ai.replay_generation, x_len)
+            for i in range(0, x_len):
+                x = x_gap * i + 10
+                y = int(280 * self.main.mario_ai.ga.fitness[i] / y_max)
+
+                if self.main.mario_ai.replay_generation == i:
+                    painter.setPen(QPen(Qt.GlobalColor.green, 1, Qt.PenStyle.SolidLine))
+                    painter.drawLine(0, 290 - y, 1570, 290 - y)
+                    painter.drawLine(x, 0, x, 300)
+                    painter.setPen(QPen(Qt.GlobalColor.red, 2, Qt.PenStyle.SolidLine))
+
+                painter.drawEllipse(x - 2, 290 - y - 2, 2 * 2, 2 * 2)
+        except:
+            pass
 
         painter.end()
 
@@ -1255,6 +1282,106 @@ class MarioAIGraph(QWidget):
         key = event.key()
         if key == Qt.Key.Key_Escape:
             self.main.close_mario_ai()
+
+
+class MarioReplayToolBox(QWidget):
+    def __init__(self, main):
+        super().__init__()
+        self.setWindowTitle('Replay Tool Box')
+        self.main = main
+
+        self.setFixedSize(290, 480)
+        self.move(100, 100)
+
+        self.current_ai = None
+
+        self.ai_list = os.listdir(DATA_PATH)
+        self.ai_list.reverse()
+        self.ai_list_widget = QListWidget()
+        for ai in self.ai_list:
+            name = np.load(os.path.join(DATA_PATH, ai, 'name.npy'))[0]
+            self.ai_list_widget.addItem(name)
+        self.ai_list_widget.clicked.connect(self.change_current_ai)
+
+        self.select_button = QPushButton('선택')
+        self.select_button.clicked.connect(self.select_ai)
+
+        self.replay_generation_line_edit = QLineEdit()
+        self.replay_generation_line_edit.setPlaceholderText("세대 입력")
+
+        self.form_layout = QFormLayout()
+
+        self.generation_label = QLabel()
+        self.elite_fitness_label = QLabel()
+
+        self.layer_label = QLabel()
+        self.generation_size_label = QLabel()
+        self.elitist_preserve_rate_label = QLabel()
+        self.static_mutation_rate_label = QLabel()
+
+        self.form_layout.addRow("학습된 세대: ", self.generation_label)
+        self.form_layout.addRow("엘리트 적합도: ", self.elite_fitness_label)
+        self.form_layout.addRow("신경망 크기: ", self.layer_label)
+        self.form_layout.addRow("세대 크기: ", self.generation_size_label)
+        self.form_layout.addRow("엘리트 보존: ", self.elitist_preserve_rate_label)
+        self.form_layout.addRow("변이: ", self.static_mutation_rate_label)
+
+        ai_list_layout = QVBoxLayout()
+        ai_list_layout.addWidget(self.ai_list_widget)
+        ai_list_layout.addWidget(self.replay_generation_line_edit)
+        ai_list_layout.addWidget(self.select_button)
+        ai_list_layout.addLayout(self.form_layout)
+
+        self.setLayout(ai_list_layout)
+
+    def change_current_ai(self):
+        self.current_ai = self.ai_list_widget.currentRow()
+
+        network = np.load(os.path.join(DATA_PATH, self.ai_list[self.current_ai], 'network.npy'))
+
+        if os.path.exists(os.path.join(DATA_PATH, self.ai_list[self.current_ai], 'generation.npy')):
+            generation = np.load(os.path.join(DATA_PATH, self.ai_list[self.current_ai], 'generation.npy'))[0]
+            self.generation_label.setText(f'{generation}세대')
+        else:
+            self.generation_label.setText('없음')
+
+        if os.path.exists(os.path.join(DATA_PATH, self.ai_list[self.current_ai], 'fitness.npy')):
+            elite_fitness = np.load(os.path.join(DATA_PATH, self.ai_list[self.current_ai], 'fitness.npy'))[-1]
+            self.elite_fitness_label.setText(f'{elite_fitness}')
+        else:
+            self.elite_fitness_label.setText('없음')
+
+        self.layer_label.setText(['2', '3', '4'][network[0]])
+        self.generation_size_label.setText(['10', '20', '30', '40', '50'][network[1]])
+        self.elitist_preserve_rate_label.setText(['0%', '10%', '20%', '30%', '40%'][network[2]])
+        self.static_mutation_rate_label.setText(['5%', '10%', '15%', '20%', '25%'][network[3]])
+
+    def select_ai(self):
+        if self.current_ai is not None:
+            try:
+                replay_generation = int(self.replay_generation_line_edit.text())
+                generation = -1
+                if os.path.exists(os.path.join(DATA_PATH, self.ai_list[self.current_ai], 'generation.npy')):
+                    generation = np.load(os.path.join(DATA_PATH, self.ai_list[self.current_ai], 'generation.npy'))[0]
+
+                if 0 <= replay_generation <= generation:
+                    self.main.close_mario_ai()
+                    self.main.run_mario_replay(self.ai_list[self.current_ai], replay_generation)
+                else:
+                    self.replay_generation_line_edit.clear()
+            except:
+                self.replay_generation_line_edit.clear()
+
+    def closeEvent(self, event):
+        self.main.close_mario_replay_tool_box()
+
+    def keyPressEvent(self, event):
+        if event.isAutoRepeat():
+            return
+
+        key = event.key()
+        if key == Qt.Key.Key_Escape:
+            self.main.close_mario_replay_tool_box()
 
 
 class MarioGYM(QWidget):
@@ -1274,6 +1401,8 @@ class MarioGYM(QWidget):
         self.mario_ai_network = None
         self.mario_ai_graph = None
 
+        self.mario_replay_tool_box = None
+
         self.setFixedSize(360, 240)
 
         mario_button = QPushButton('Super Mario Bros.')
@@ -1281,7 +1410,7 @@ class MarioGYM(QWidget):
         mario_ai_button = QPushButton('Mario GYM')
         mario_ai_button.clicked.connect(self.run_mario_ai_tool_box)
         mario_replay_button = QPushButton('Replay')
-        mario_replay_button.clicked.connect(self.run_mario_replay)
+        mario_replay_button.clicked.connect(self.run_mario_replay_tool_box)
 
         self.game_level_combo_box = QComboBox()
         self.game_level_combo_box.addItem('Level 1')
@@ -1360,11 +1489,38 @@ class MarioGYM(QWidget):
             self.mario_ai_graph.close()
             self.mario_ai = None
 
-    def run_mario_replay(self):
-        pass
+    def run_mario_replay_tool_box(self):
+        self.mario_replay_tool_box = MarioReplayToolBox(self)
+        self.mario_replay_tool_box.show()
+
+        self.hide()
+
+    def close_mario_replay_tool_box(self):
+        self.close_mario_replay()
+        self.mario_replay_tool_box.close()
+        self.show()
+
+    def run_mario_replay(self, select_folder_name, replay_generation):
+        self.mario_ai_tile_map = MarioAITileMap(self)
+        self.mario_ai_tile_map.show()
+        self.mario_ai_info = MarioAIInfo(self)
+        self.mario_ai_info.show()
+        self.mario_ai_network = MarioAINetwork(self)
+        self.mario_ai_network.show()
+        self.mario_ai_graph = MarioAIGraph(self)
+        self.mario_ai_graph.show()
+        self.mario_ai = MarioAI(self, self.game_level_combo_box.currentIndex(), self.game_speed_combo_box.currentIndex(), select_folder_name, replay_generation)
+        self.mario_ai.show()
 
     def close_mario_replay(self):
-        pass
+        if self.mario_ai is not None:
+            self.mario_ai.frame_timer.stop_game()
+            self.mario_ai.close()
+            self.mario_ai_tile_map.close()
+            self.mario_ai_info.close()
+            self.mario_ai_network.close()
+            self.mario_ai_graph.close()
+            self.mario_ai = None
 
     def keyPressEvent(self, event):
         if event.isAutoRepeat():
