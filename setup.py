@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='Mario_GYM',
-    version='1.0',
+    version='1.1',
     description='Preprocessed Retro GYM for Super Mario Bros.',
     author='OAO',
     author_email='pjh9996@naver.com',
