@@ -1251,10 +1251,7 @@ class MarioAIGraph(QWidget):
 
         try:
             x_len = len(self.main.mario_ai.ga.fitness)
-            x_gap = 0
             y_max = 0
-            if x_len >= 2:
-                x_gap = 1550 // (x_len - 1)
 
             if x_len >= 1:
                 y_max = np.max(self.main.mario_ai.ga.fitness)
@@ -1264,7 +1261,7 @@ class MarioAIGraph(QWidget):
 
             painter.setPen(QPen(Qt.GlobalColor.blue, 2, Qt.PenStyle.SolidLine))
             for i in range(0, x_len):
-                x = x_gap * i + 10
+                x = int(1560 * (i + 1) / x_len)
                 y = int(280 * self.main.mario_ai.ga.fitness[i] / y_max)
 
                 if px != -1:
@@ -1277,7 +1274,7 @@ class MarioAIGraph(QWidget):
             painter.setBrush(QBrush(Qt.GlobalColor.red))
 
             for i in range(0, x_len):
-                x = x_gap * i + 10
+                x = int(1560 * (i + 1) / x_len)
                 y = int(280 * self.main.mario_ai.ga.fitness[i] / y_max)
 
                 if self.main.mario_ai.replay_generation == i:
